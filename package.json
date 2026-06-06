@@ -1,10 +1,10 @@
 {
   "name": "dzaain-img-api",
   "version": "1.0.0",
-  "description": "Dzaain HTML to JPG API - unlimited free image generation",
+  "description": "Dzaain HTML to JPG API",
   "dependencies": {
-    "@sparticuz/chromium": "^123.0.1",
-    "puppeteer-core": "^22.6.0"
+    "@sparticuz/chromium": "^131.0.1",
+    "puppeteer-core": "^23.0.0"
   },
   "engines": {
     "node": "22.x"
