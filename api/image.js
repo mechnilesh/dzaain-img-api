@@ -1,8 +1,7 @@
-const puppeteer = require('puppeteer-core');
 const chromium = require('@sparticuz/chromium');
+const puppeteer = require('puppeteer-core');
 
 module.exports = async function handler(req, res) {
-
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Use POST method' });
   }
@@ -13,16 +12,27 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: 'html field is required' });
   }
 
+  let browser = null;
+
   try {
-    const browser = await puppeteer.launch({
-      args: chromium.args,
+    browser = await puppeteer.launch({
+      args: [
+        ...chromium.args,
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process'
+      ],
       defaultViewport: {
         width: parseInt(width),
         height: parseInt(height),
         deviceScaleFactor: 1
       },
       executablePath: await chromium.executablePath(),
-      headless: chromium.headless
+      headless: true
     });
 
     const page = await browser.newPage();
@@ -34,10 +44,10 @@ module.exports = async function handler(req, res) {
     });
 
     await page.setContent(html, {
-      waitUntil: ['networkidle0', 'domcontentloaded']
+      waitUntil: 'networkidle0',
+      timeout: 20000
     });
 
-    // Wait for Google Fonts to load
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     const screenshot = await page.screenshot({
@@ -51,14 +61,14 @@ module.exports = async function handler(req, res) {
       }
     });
 
-    await browser.close();
-
     res.setHeader('Content-Type', 'image/jpeg');
     res.setHeader('Content-Disposition', 'inline; filename="dzaain.jpg"');
     res.send(screenshot);
 
   } catch (error) {
-    console.error(error);
+    console.error('Error:', error);
     res.status(500).json({ error: error.message });
+  } finally {
+    if (browser) await browser.close();
   }
 };
