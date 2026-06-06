@@ -15,6 +15,15 @@ module.exports = async function handler(req, res) {
   let browser = null;
 
   try {
+    const executablePath = await chromium.executablePath();
+
+    // Set LD_LIBRARY_PATH to help find shared libraries
+    const execDir = require('path').dirname(executablePath);
+    process.env.LD_LIBRARY_PATH = [
+      execDir,
+      process.env.LD_LIBRARY_PATH
+    ].filter(Boolean).join(':');
+
     browser = await puppeteer.launch({
       args: [
         ...chromium.args,
@@ -22,16 +31,15 @@ module.exports = async function handler(req, res) {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process'
+        '--single-process',
+        '--no-zygote'
       ],
       defaultViewport: {
         width: parseInt(width),
         height: parseInt(height),
         deviceScaleFactor: 1
       },
-      executablePath: await chromium.executablePath(),
+      executablePath: executablePath,
       headless: true
     });
 
@@ -45,7 +53,7 @@ module.exports = async function handler(req, res) {
 
     await page.setContent(html, {
       waitUntil: 'networkidle0',
-      timeout: 20000
+      timeout: 25000
     });
 
     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -66,9 +74,11 @@ module.exports = async function handler(req, res) {
     res.send(screenshot);
 
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error:', error.message);
     res.status(500).json({ error: error.message });
   } finally {
-    if (browser) await browser.close();
+    if (browser) {
+      try { await browser.close(); } catch(e) {}
+    }
   }
 };
