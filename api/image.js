@@ -1,5 +1,6 @@
 const chromium = require('@sparticuz/chromium');
 const puppeteer = require('puppeteer-core');
+const crypto = require('crypto');
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -22,14 +23,14 @@ module.exports = async function handler(req, res) {
     browser = await puppeteer.launch({
       args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process', '--no-zygote'],
       defaultViewport: { width: parseInt(width), height: parseInt(height), deviceScaleFactor: 1 },
-      executablePath: executablePath,
+      executablePath,
       headless: true
     });
 
     const page = await browser.newPage();
     await page.setViewport({ width: parseInt(width), height: parseInt(height), deviceScaleFactor: 1 });
     await page.setContent(html, { waitUntil: 'networkidle0', timeout: 25000 });
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(r => setTimeout(r, 2000));
 
     const screenshot = await page.screenshot({
       type: 'jpeg',
@@ -40,41 +41,55 @@ module.exports = async function handler(req, res) {
     await browser.close();
     browser = null;
 
-    // Upload to Cloudinary
-    const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload`;
-    const base64Image = `data:image/jpeg;base64,${screenshot.toString('base64')}`;
+    // Upload to Cloudinary via signed API
+    const timestamp = Math.floor(Date.now() / 1000);
+    const folder = 'dzaain';
+    const signStr = `folder=${folder}&timestamp=${timestamp}${process.env.CLOUDINARY_API_SECRET}`;
+    const signature = crypto.createHash('sha256').update(signStr).digest('hex');
 
-    const formData = new URLSearchParams();
-    formData.append('file', base64Image);
-    formData.append('api_key', process.env.CLOUDINARY_API_KEY);
-    formData.append('timestamp', Math.floor(Date.now() / 1000).toString());
-    formData.append('folder', 'dzaain');
+    // Build multipart body manually
+    const boundary = '----FormBoundary' + Math.random().toString(36).slice(2);
+    const CRLF = '\r\n';
 
-    // Generate signature
-    const crypto = require('crypto');
-    const signatureStr = `folder=dzaain&timestamp=${Math.floor(Date.now() / 1000)}${process.env.CLOUDINARY_API_SECRET}`;
-    const signature = crypto.createHash('sha256').update(signatureStr).digest('hex');
-    formData.append('signature', signature);
+    const addField = (name, value) =>
+      `--${boundary}${CRLF}Content-Disposition: form-data; name="${name}"${CRLF}${CRLF}${value}${CRLF}`;
 
-    const uploadRes = await fetch(cloudinaryUrl, {
+    let bodyStr = '';
+    bodyStr += addField('api_key', process.env.CLOUDINARY_API_KEY);
+    bodyStr += addField('timestamp', timestamp.toString());
+    bodyStr += addField('folder', folder);
+    bodyStr += addField('signature', signature);
+
+    const fileHeader = `--${boundary}${CRLF}Content-Disposition: form-data; name="file"; filename="dzaain.jpg"${CRLF}Content-Type: image/jpeg${CRLF}${CRLF}`;
+    const fileFooter = `${CRLF}--${boundary}--${CRLF}`;
+
+    const headerBuf = Buffer.from(bodyStr + fileHeader, 'utf-8');
+    const footerBuf = Buffer.from(fileFooter, 'utf-8');
+    const body = Buffer.concat([headerBuf, screenshot, footerBuf]);
+
+    const cloudUrl = `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload`;
+
+    const uploadRes = await fetch(cloudUrl, {
       method: 'POST',
-      body: formData
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': body.length.toString()
+      },
+      body
     });
 
-    const uploadData = await uploadRes.json();
+    const data = await uploadRes.json();
 
-    if (!uploadData.secure_url) {
-      throw new Error('Cloudinary upload failed: ' + JSON.stringify(uploadData));
+    if (!data.secure_url) {
+      throw new Error('Cloudinary failed: ' + JSON.stringify(data));
     }
 
-    res.status(200).json({ url: uploadData.secure_url });
+    res.status(200).json({ url: data.secure_url });
 
   } catch (error) {
-    console.error('Error:', error.message);
+    console.error(error.message);
     res.status(500).json({ error: error.message });
   } finally {
-    if (browser) {
-      try { await browser.close(); } catch(e) {}
-    }
+    if (browser) try { await browser.close(); } catch(e) {}
   }
 };
